@@ -57,46 +57,101 @@ def make_payment(checkout_data=None):
                 # Get or create customer if needed
                 customer_name = frappe.db.get_value("Customer", {"email_id": frappe.session.user}, "name")
                 if not customer_name:
-                    # Create a customer if one doesn't exist
+                    # Find a valid customer group
+                    customer_group = None
+                    # First try to get the default customer group from Selling Settings
+                    try:
+                        customer_group = frappe.db.get_single_value("Selling Settings", "customer_group")
+                    except Exception:
+                        pass
+                    
+                    # If that fails, get the first available customer group
+                    if not customer_group:
+                        customer_groups = frappe.get_all("Customer Group", fields=["name"])
+                        if customer_groups:
+                            customer_group = customer_groups[0].name
+                        else:
+                            customer_group = "All Customer Groups"  # Fallback
+                    
+                    # Find a valid territory
+                    territory = None
+                    # First try to get the default territory from Selling Settings
+                    try:
+                        territory = frappe.db.get_single_value("Selling Settings", "territory")
+                    except Exception:
+                        pass
+                    
+                    # If that fails, get the first available territory
+                    if not territory:
+                        territories = frappe.get_all("Territory", fields=["name"])
+                        if territories:
+                            territory = territories[0].name
+                        else:
+                            territory = "All Territories"  # Fallback
+                    
+                    # Create a customer
                     customer = frappe.new_doc("Customer")
                     customer.customer_name = frappe.session.user.split("@")[0]
                     customer.customer_type = "Individual"
-                    customer.customer_group = frappe.db.get_value("Selling Settings", "customer_group") or "All Customer Groups"
-                    customer.territory = frappe.db.get_value("Selling Settings", "territory") or "All Territories"
+                    customer.customer_group = customer_group
+                    customer.territory = territory
                     customer.email_id = frappe.session.user
-                    customer.save(ignore_permissions=True)
-                    customer_name = customer.name
+                    
+                    # Save the customer
+                    try:
+                        customer.save(ignore_permissions=True)
+                        customer_name = customer.name
+                    except Exception as e:
+                        frappe.log_error(f"Failed to create customer: {e}", "Cashfree Payment Error")
+                        # If we can't create a customer, use a default one
+                        default_customers = frappe.get_all("Customer", limit=1)
+                        if default_customers:
+                            customer_name = default_customers[0].name
+                        else:
+                            frappe.throw("No customers found in the system")
                 
                 # Create a proper sales order with all required fields
                 dummy_ref = frappe.new_doc("Sales Order")
                 dummy_ref.customer = customer_name
                 dummy_ref.order_type = "Shopping Cart"
                 dummy_ref.currency = checkout_data.get("currency") or "INR"
-                dummy_ref.company = frappe.db.get_single_value("Global Defaults", "default_company")
+                
+                # Get company
+                company = frappe.db.get_single_value("Global Defaults", "default_company")
+                if not company:
+                    companies = frappe.get_all("Company", limit=1)
+                    if companies:
+                        company = companies[0].name
+                    else:
+                        frappe.throw("No company found in the system")
+                
+                dummy_ref.company = company
                 dummy_ref.transaction_date = frappe.utils.today()
                 dummy_ref.delivery_date = frappe.utils.add_days(frappe.utils.today(), 7)
-                
-                # Check if payment_terms_template field exists in Selling Settings
-                try:
-                    if frappe.db.has_column("Selling Settings", "payment_terms_template"):
-                        payment_terms_template = frappe.db.get_value("Selling Settings", "name", "payment_terms_template")
-                        if payment_terms_template:
-                            dummy_ref.payment_terms_template = payment_terms_template
-                except Exception as e:
-                    frappe.log_error(f"Error setting payment terms template: {str(e)}", "Cashfree Payment Error")
                 
                 # Add at least one item
                 item_code = frappe.db.get_value("Item", {"is_fixed_asset": 0, "is_stock_item": 0}, "name")
                 if not item_code:
+                    # Get any item if the first query fails
+                    item_code = frappe.db.get_value("Item", {}, "name")
+                    
                     # Create a service item if no suitable item exists
-                    service_item = frappe.new_doc("Item")
-                    service_item.item_name = "Payment Service"
-                    service_item.item_code = "PAYMENT-SERVICE"
-                    service_item.item_group = "Services"
-                    service_item.is_stock_item = 0
-                    service_item.stock_uom = "Nos"
-                    service_item.save(ignore_permissions=True)
-                    item_code = service_item.name
+                    if not item_code:
+                        # Find a valid item group
+                        item_groups = frappe.get_all("Item Group", fields=["name"])
+                        item_group = "All Item Groups"
+                        if item_groups:
+                            item_group = item_groups[0].name
+                        
+                        # Create a service item
+                        service_item = frappe.new_doc("Item")
+                        service_item.item_name = "Payment Service"
+                        service_item.item_code = "PAYMENT-SERVICE"
+                        service_item.item_group = item_group
+                        service_item.is_stock_item = 0
+                        service_item.stock_uom = "Nos"
+                        service_item.save(ignore_permissions=True)
+                        item_code = service_item.name
                     
                 dummy_ref.append("items", {
                     "item_code": item_code,
@@ -112,12 +167,6 @@ def make_payment(checkout_data=None):
                 dummy_ref.base_grand_total = amount
                 dummy_ref.rounded_total = amount
                 dummy_ref.base_rounded_total = amount
-                
-                # Generate in_words if money_in_words function is available
-                try:
-                    dummy_ref.in_words = frappe.utils.money_in_words(amount, dummy_ref.currency)
-                except Exception:
-                    pass  # Skip if the function doesn't exist
                 
                 # Save the sales order
                 dummy_ref.save(ignore_permissions=True)
@@ -141,15 +190,7 @@ def make_payment(checkout_data=None):
         
         # Save the payment request
         payment_request.save(ignore_permissions=True)
-        
-        # Submit if required - safely check if the field exists
-        try:
-            submit_payment_request = frappe.db.get_value("Cashfree Settings", "name", "submit_payment_request") or 1
-            if int(submit_payment_request):
-                payment_request.submit()
-        except Exception:
-            # Default to submitting the payment request
-            payment_request.submit()
+        payment_request.submit()
         
         return payment_request
     
