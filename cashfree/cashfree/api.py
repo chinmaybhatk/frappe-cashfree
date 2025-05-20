@@ -107,13 +107,13 @@ def create_cashfree_order(payment_request, cashfree_settings):
     if cashfree_settings.redirect_url:
         order_data["return_url"] = cashfree_settings.redirect_url
     else:
-        order_data["return_url"] = f"{site_url}/api/method/cashfree.api.handle_redirect"
+        order_data["return_url"] = f"{site_url}/api/method/cashfree.cashfree.api.handle_redirect"
     
     # Add webhook URL if configured
     if cashfree_settings.webhook_url:
         order_data["notify"]["webhook"] = cashfree_settings.webhook_url
     else:
-        order_data["notify"]["webhook"] = f"{site_url}/api/method/cashfree.api.handle_webhook"
+        order_data["notify"]["webhook"] = f"{site_url}/api/method/cashfree.cashfree.api.handle_webhook"
     
     # Headers for API request
     headers = {
