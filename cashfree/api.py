@@ -16,7 +16,15 @@ from cashfree.doctype.cashfree_settings.cashfree_settings import CashfreeSetting
 
 @frappe.whitelist()
 # Add this where the Payment Request is being created
-def make_payment(checkout_data):
+def make_payment(checkout_data=None):
+    # If checkout_data is not provided, try to get data from frappe.form_dict
+    if checkout_data is None:
+        checkout_data = frappe.form_dict
+    
+    # If checkout_data is still empty, initialize it as an empty dict
+    if not checkout_data:
+        checkout_data = {}
+    
     # Create a Payment Request with proper reference
     payment_request = frappe.new_doc("Payment Request")
     
@@ -47,8 +55,28 @@ def make_payment(checkout_data):
             payment_request.reference_doctype = "Sales Order"
             payment_request.reference_name = dummy_ref.name
     
-    # Continue with the rest of your existing code for setting payment details
-    # ...
+    # Set other required fields
+    payment_request.payment_request_type = "Inward"
+    payment_request.currency = checkout_data.get("currency") or "INR"
+    payment_request.grand_total = checkout_data.get("amount") or 0
+    payment_request.payment_gateway = "Cashfree"
+    payment_request.payment_gateway_account = frappe.db.get_value("Payment Gateway Account", 
+                                                                 {"payment_gateway": "Cashfree", "currency": payment_request.currency},
+                                                                 "name")
+    
+    # Email details
+    payment_request.email_to = checkout_data.get("email") or frappe.session.user
+    payment_request.subject = _("Payment Request for {}").format(payment_request.reference_name)
+    payment_request.message = checkout_data.get("message") or _("Please click the link below to make your payment")
+    
+    # Save the payment request
+    payment_request.save(ignore_permissions=True)
+    
+    # Submit if auto-submission is required
+    if cint(frappe.db.get_single_value("Cashfree Settings", "submit_payment_request", default=1)):
+        payment_request.submit()
+    
+    return payment_request
 
 def create_payment_request(reference_doctype, reference_docname):
     """Create a payment request for the order"""
