@@ -11,7 +11,7 @@ import hashlib
 import base64
 from frappe import _
 from frappe.utils import get_url, cint, flt, cstr, now, get_datetime
-from frappe.integrations.utils import create_payment_gateway, create_request_log
+from frappe.integrations.utils import create_request_log 
 from cashfree.doctype.cashfree_settings.cashfree_settings import CashfreeSettings
 
 @frappe.whitelist()

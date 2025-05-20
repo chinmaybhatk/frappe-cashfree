@@ -4,7 +4,16 @@
 
 import frappe
 from frappe.model.document import Document
-from frappe.integrations.utils import create_payment_gateway
+
+# Custom implementation for create_payment_gateway since it's not available in Frappe v15
+def create_payment_gateway(gateway):
+    """Create Payment Gateway in Frappe"""
+    if not frappe.db.exists("Payment Gateway", gateway):
+        payment_gateway = frappe.get_doc({
+            "doctype": "Payment Gateway",
+            "gateway": gateway
+        })
+        payment_gateway.insert(ignore_permissions=True)
 
 def after_install():
     """
