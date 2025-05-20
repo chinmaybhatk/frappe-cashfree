@@ -17,17 +17,17 @@ doctype_js = {
 
 # Website
 website_route_rules = [
-    {"from_route": "/api/method/cashfree.cashfree.api.make_payment", "to_route": "cashfree.cashfree.api.make_payment"},
-    {"from_route": "/api/method/cashfree.cashfree.api.handle_redirect", "to_route": "cashfree.cashfree.api.handle_redirect"},
-    {"from_route": "/api/method/cashfree.cashfree.api.handle_webhook", "to_route": "cashfree.cashfree.api.handle_webhook"}
+    {"from_route": "/api/method/cashfree.api.make_payment", "to_route": "cashfree.api.make_payment"},
+    {"from_route": "/api/method/cashfree.api.handle_redirect", "to_route": "cashfree.api.handle_redirect"},
+    {"from_route": "/api/method/cashfree.api.handle_webhook", "to_route": "cashfree.api.handle_webhook"}
 ]
 
 # Whitelisted methods
 whitelisted_methods = {
-    "cashfree.cashfree.api.make_payment": True,
-    "cashfree.cashfree.api.handle_redirect": True,
-    "cashfree.cashfree.api.handle_webhook": True,
-    "cashfree.cashfree.api.get_payment_status": True
+    "cashfree.api.make_payment": True,
+    "cashfree.api.handle_redirect": True,
+    "cashfree.api.handle_webhook": True,
+    "cashfree.api.get_payment_status": True
 }
 
 # Installation

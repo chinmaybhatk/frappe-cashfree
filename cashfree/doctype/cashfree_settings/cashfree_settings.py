@@ -32,8 +32,8 @@ class CashfreeSettings(Document):
     
     def get_payment_url(self, **kwargs):
         """Return payment url with several payment options"""
-        return get_url(f"/api/method/cashfree.cashfree.api.make_payment?reference_doctype={kwargs.get('reference_doctype')}&reference_docname={kwargs.get('reference_docname')}")
-    
+        return get_url(f"/api/method/cashfree.api.make_payment?reference_doctype={kwargs.get('reference_doctype')}&reference_docname={kwargs.get('reference_docname')}")
+
     def get_api_url(self):
         """Return Cashfree API URL based on the mode"""
         if self.mode == "PRODUCTION":
