@@ -17,126 +17,145 @@ from cashfree.doctype.cashfree_settings.cashfree_settings import CashfreeSetting
 @frappe.whitelist()
 # Add this where the Payment Request is being created
 def make_payment(checkout_data=None):
-    # If checkout_data is not provided, try to get data from frappe.form_dict
-    if checkout_data is None:
-        checkout_data = frappe.form_dict
-    
-    # If checkout_data is still empty, initialize it as an empty dict
-    if not checkout_data:
-        checkout_data = {}
-    
-    # Create a Payment Request with proper reference
-    payment_request = frappe.new_doc("Payment Request")
-    
-    # Extract amount early to ensure it's available
-    amount = checkout_data.get("amount")
-    if not amount:
-        amount = frappe.form_dict.get("amount")
-    
-    # Convert to float and ensure it's not None
-    if amount:
-        amount = float(amount)
-    else:
-        amount = 100  # Set a default amount if not provided
-    
-    # Set required fields to pass validation
-    payment_request.reference_doctype = checkout_data.get("reference_doctype") or "Sales Order"
-    payment_request.reference_name = checkout_data.get("reference_name")
-    
-    # If reference_name is not provided, create a temporary "Shopping Cart" reference
-    if not payment_request.reference_name:
-        # Check if there's a Sales Order or Cart to reference
-        cart_id = frappe.db.get_value("Shopping Cart", 
-                                     {"owner": frappe.session.user, "status": "Open"}, 
-                                     "name")
-        if cart_id:
-            payment_request.reference_doctype = "Shopping Cart"
-            payment_request.reference_name = cart_id
+    try:
+        # If checkout_data is not provided, try to get data from frappe.form_dict
+        if checkout_data is None:
+            checkout_data = frappe.form_dict
+        
+        # If checkout_data is still empty, initialize it as an empty dict
+        if not checkout_data:
+            checkout_data = {}
+        
+        # Create a Payment Request with proper reference
+        payment_request = frappe.new_doc("Payment Request")
+        
+        # Extract amount early to ensure it's available
+        amount = checkout_data.get("amount")
+        if not amount:
+            amount = frappe.form_dict.get("amount")
+        
+        # Convert to float and ensure it's not None
+        if amount:
+            amount = float(amount)
         else:
-            # Get or create customer if needed
-            customer_name = frappe.db.get_value("Customer", {"email_id": frappe.session.user}, "name")
-            if not customer_name:
-                # Create a customer if one doesn't exist
-                customer = frappe.new_doc("Customer")
-                customer.customer_name = frappe.session.user.split("@")[0]
-                customer.customer_type = "Individual"
-                customer.customer_group = frappe.db.get_single_value("Selling Settings", "customer_group") or "All Customer Groups"
-                customer.territory = frappe.db.get_single_value("Selling Settings", "territory") or "All Territories"
-                customer.email_id = frappe.session.user
-                customer.save(ignore_permissions=True)
-                customer_name = customer.name
-            
-            # Create a proper sales order with all required fields
-            dummy_ref = frappe.new_doc("Sales Order")
-            dummy_ref.customer = customer_name
-            dummy_ref.order_type = "Shopping Cart"
-            dummy_ref.currency = checkout_data.get("currency") or "INR"
-            dummy_ref.company = frappe.db.get_single_value("Global Defaults", "default_company")
-            dummy_ref.transaction_date = frappe.utils.today()
-            dummy_ref.delivery_date = frappe.utils.add_days(frappe.utils.today(), 7)
-            
-            # Set payment terms template if available
-            payment_terms_template = frappe.db.get_single_value("Selling Settings", "payment_terms_template")
-            if payment_terms_template:
-                dummy_ref.payment_terms_template = payment_terms_template
-            
-            # Add at least one item
-            item_code = frappe.db.get_value("Item", {"is_fixed_asset": 0, "is_stock_item": 0}, "name")
-            if not item_code:
-                # Create a service item if no suitable item exists
-                service_item = frappe.new_doc("Item")
-                service_item.item_name = "Payment Service"
-                service_item.item_code = "PAYMENT-SERVICE"
-                service_item.item_group = "Services"
-                service_item.is_stock_item = 0
-                service_item.stock_uom = "Nos"
-                service_item.save(ignore_permissions=True)
-                item_code = service_item.name
+            amount = 100  # Set a default amount if not provided
+        
+        # Set required fields to pass validation
+        payment_request.reference_doctype = checkout_data.get("reference_doctype") or "Sales Order"
+        payment_request.reference_name = checkout_data.get("reference_name")
+        
+        # If reference_name is not provided, create a temporary "Shopping Cart" reference
+        if not payment_request.reference_name:
+            # Check if there's a Sales Order or Cart to reference
+            cart_id = frappe.db.get_value("Shopping Cart", 
+                                         {"owner": frappe.session.user, "status": "Open"}, 
+                                         "name")
+            if cart_id:
+                payment_request.reference_doctype = "Shopping Cart"
+                payment_request.reference_name = cart_id
+            else:
+                # Get or create customer if needed
+                customer_name = frappe.db.get_value("Customer", {"email_id": frappe.session.user}, "name")
+                if not customer_name:
+                    # Create a customer if one doesn't exist
+                    customer = frappe.new_doc("Customer")
+                    customer.customer_name = frappe.session.user.split("@")[0]
+                    customer.customer_type = "Individual"
+                    customer.customer_group = frappe.db.get_value("Selling Settings", "customer_group") or "All Customer Groups"
+                    customer.territory = frappe.db.get_value("Selling Settings", "territory") or "All Territories"
+                    customer.email_id = frappe.session.user
+                    customer.save(ignore_permissions=True)
+                    customer_name = customer.name
                 
-            dummy_ref.append("items", {
-                "item_code": item_code,
-                "qty": 1,
-                "rate": amount,
-                "amount": amount,
-                "delivery_date": frappe.utils.add_days(frappe.utils.today(), 7)
-            })
-            
-            # Set totals explicitly
-            dummy_ref.total = amount
-            dummy_ref.grand_total = amount
-            dummy_ref.base_grand_total = amount
-            dummy_ref.rounded_total = amount
-            dummy_ref.base_rounded_total = amount
-            dummy_ref.in_words = frappe.utils.money_in_words(amount, dummy_ref.currency)
-            
-            # Save the sales order
-            dummy_ref.save(ignore_permissions=True)
-            
-            payment_request.reference_doctype = "Sales Order"
-            payment_request.reference_name = dummy_ref.name
+                # Create a proper sales order with all required fields
+                dummy_ref = frappe.new_doc("Sales Order")
+                dummy_ref.customer = customer_name
+                dummy_ref.order_type = "Shopping Cart"
+                dummy_ref.currency = checkout_data.get("currency") or "INR"
+                dummy_ref.company = frappe.db.get_single_value("Global Defaults", "default_company")
+                dummy_ref.transaction_date = frappe.utils.today()
+                dummy_ref.delivery_date = frappe.utils.add_days(frappe.utils.today(), 7)
+                
+                # Check if payment_terms_template field exists in Selling Settings
+                try:
+                    if frappe.db.has_column("Selling Settings", "payment_terms_template"):
+                        payment_terms_template = frappe.db.get_value("Selling Settings", "name", "payment_terms_template")
+                        if payment_terms_template:
+                            dummy_ref.payment_terms_template = payment_terms_template
+                except Exception as e:
+                    frappe.log_error(f"Error setting payment terms template: {str(e)}", "Cashfree Payment Error")
+                
+                # Add at least one item
+                item_code = frappe.db.get_value("Item", {"is_fixed_asset": 0, "is_stock_item": 0}, "name")
+                if not item_code:
+                    # Create a service item if no suitable item exists
+                    service_item = frappe.new_doc("Item")
+                    service_item.item_name = "Payment Service"
+                    service_item.item_code = "PAYMENT-SERVICE"
+                    service_item.item_group = "Services"
+                    service_item.is_stock_item = 0
+                    service_item.stock_uom = "Nos"
+                    service_item.save(ignore_permissions=True)
+                    item_code = service_item.name
+                    
+                dummy_ref.append("items", {
+                    "item_code": item_code,
+                    "qty": 1,
+                    "rate": amount,
+                    "amount": amount,
+                    "delivery_date": frappe.utils.add_days(frappe.utils.today(), 7)
+                })
+                
+                # Set totals explicitly
+                dummy_ref.total = amount
+                dummy_ref.grand_total = amount
+                dummy_ref.base_grand_total = amount
+                dummy_ref.rounded_total = amount
+                dummy_ref.base_rounded_total = amount
+                
+                # Generate in_words if money_in_words function is available
+                try:
+                    dummy_ref.in_words = frappe.utils.money_in_words(amount, dummy_ref.currency)
+                except Exception:
+                    pass  # Skip if the function doesn't exist
+                
+                # Save the sales order
+                dummy_ref.save(ignore_permissions=True)
+                
+                payment_request.reference_doctype = "Sales Order"
+                payment_request.reference_name = dummy_ref.name
+        
+        # Set other required fields
+        payment_request.payment_request_type = "Inward"
+        payment_request.currency = checkout_data.get("currency") or "INR"
+        payment_request.grand_total = amount
+        payment_request.payment_gateway = "Cashfree"
+        payment_request.payment_gateway_account = frappe.db.get_value("Payment Gateway Account", 
+                                                                   {"payment_gateway": "Cashfree", "currency": payment_request.currency},
+                                                                   "name")
+        
+        # Email details
+        payment_request.email_to = checkout_data.get("email") or frappe.session.user
+        payment_request.subject = _("Payment Request for {}").format(payment_request.reference_name)
+        payment_request.message = checkout_data.get("message") or _("Please click the link below to make your payment")
+        
+        # Save the payment request
+        payment_request.save(ignore_permissions=True)
+        
+        # Submit if required - safely check if the field exists
+        try:
+            submit_payment_request = frappe.db.get_value("Cashfree Settings", "name", "submit_payment_request") or 1
+            if int(submit_payment_request):
+                payment_request.submit()
+        except Exception:
+            # Default to submitting the payment request
+            payment_request.submit()
+        
+        return payment_request
     
-    # Set other required fields
-    payment_request.payment_request_type = "Inward"
-    payment_request.currency = checkout_data.get("currency") or "INR"
-    payment_request.grand_total = amount
-    payment_request.payment_gateway = "Cashfree"
-    payment_request.payment_gateway_account = frappe.db.get_value("Payment Gateway Account", 
-                                                               {"payment_gateway": "Cashfree", "currency": payment_request.currency},
-                                                               "name")
-    
-    # Email details
-    payment_request.email_to = checkout_data.get("email") or frappe.session.user
-    payment_request.subject = _("Payment Request for {}").format(payment_request.reference_name)
-    payment_request.message = checkout_data.get("message") or _("Please click the link below to make your payment")
-    
-    # Save the payment request
-    payment_request.save(ignore_permissions=True)
-    
-    # Submit if required
-    if cint(frappe.db.get_single_value("Cashfree Settings", "submit_payment_request", default=1)):
-        payment_request.submit()
-    
-    return payment_request
+    except Exception as e:
+        frappe.log_error(title="Cashfree Payment Error", message=str(e))
+        raise
 
 def create_payment_request(reference_doctype, reference_docname):
     """Create a payment request for the order"""
