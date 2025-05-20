@@ -40,3 +40,10 @@ class CashfreeSettings(Document):
             return "https://api.cashfree.com"
         else:
             return "https://sandbox.cashfree.com"
+    
+    # Add this method to fix the error
+    def validate_transaction_currency(self, currency):
+        """Validate if the currency is supported by the payment gateway"""
+        if currency not in self.supported_currencies:
+            frappe.throw(_(f"Currency {currency} is not supported by Cashfree. Supported currencies are {', '.join(self.supported_currencies)}"))
+        return True
