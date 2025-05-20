@@ -48,7 +48,7 @@ whitelisted_methods = {
 after_install = "cashfree.cashfree.install.after_install"
 
 # Integrations
-get_payment_gateway_controller = "cashfree.get_controller"
+get_payment_gateway_controller = "cashfree.cashfree.get_controller"
 
 def get_controller(payment_gateway):
     """Get payment gateway controller"""
