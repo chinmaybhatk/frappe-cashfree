@@ -4,11 +4,11 @@ from .. import __version__ as app_version
 
 app_name = "cashfree"
 app_title = "Cashfree Integration"
-app_publisher = "Your Company"
+app_publisher = "walue.biz"
 app_description = "Cashfree Payment Gateway Integration for Frappe"
 app_icon = "octicon octicon-credit-card"
 app_color = "#25C4B9"
-app_email = "your.email@example.com"
+app_email = "chinmaybhatk@gmail.com"
 app_license = "MIT"
 
 # Hooks
