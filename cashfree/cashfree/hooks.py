@@ -45,7 +45,7 @@ whitelisted_methods = {
 }
 
 # Installation
-after_install = "cashfree.after_install"
+after_install = "cashfree.cashfree.install.after_install"
 
 # Integrations
 get_payment_gateway_controller = "cashfree.get_controller"
