@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025, Your Company and contributors
+# Copyright (c) 2025, walue.biz and contributors
 # For license information, please see license.txt
 
 from __future__ import unicode_literals
@@ -10,34 +10,8 @@ import hmac
 import hashlib
 import base64
 from frappe import _
-from frappe.model.document import Document
 from frappe.utils import get_url, cint, flt, cstr, now, get_datetime
 from frappe.integrations.utils import create_payment_gateway, create_request_log
-
-
-class CashfreeSettings(Document):
-    supported_currencies = ["INR"]
-    
-    def validate(self):
-        create_payment_gateway('Cashfree')
-        self.validate_credentials()
-    
-    def validate_credentials(self):
-        """Validate API credentials"""
-        if not self.get('api_key') or not self.get('secret_key'):
-            frappe.throw(_("API Key and Secret Key are required."))
-    
-    def get_payment_url(self, **kwargs):
-        """Return payment url with several payment options"""
-        return get_url(f"/api/method/cashfree.make_payment?reference_doctype={kwargs.get('reference_doctype')}&reference_docname={kwargs.get('reference_docname')}")
-    
-    def get_api_url(self):
-        """Return Cashfree API URL based on the mode"""
-        if self.mode == "PRODUCTION":
-            return "https://api.cashfree.com"
-        else:
-            return "https://sandbox.cashfree.com"
-
 
 @frappe.whitelist()
 def make_payment(reference_doctype, reference_docname):
@@ -46,7 +20,7 @@ def make_payment(reference_doctype, reference_docname):
     cashfree_settings = frappe.get_doc("Cashfree Settings")
     
     # Validate currency
-    if reference_doc.currency not in cashfree_settings.supported_currencies:
+    if reference_doc.currency not in ["INR"]:  # Settings class has supported_currencies
         frappe.throw(_("Currency {0} is not supported by Cashfree").format(reference_doc.currency))
     
     # Create payment request
@@ -132,13 +106,13 @@ def create_cashfree_order(payment_request, cashfree_settings):
     if cashfree_settings.redirect_url:
         order_data["return_url"] = cashfree_settings.redirect_url
     else:
-        order_data["return_url"] = f"{site_url}/api/method/cashfree.handle_redirect"
+        order_data["return_url"] = f"{site_url}/api/method/cashfree.api.handle_redirect"
     
     # Add webhook URL if configured
     if cashfree_settings.webhook_url:
         order_data["notify"]["webhook"] = cashfree_settings.webhook_url
     else:
-        order_data["notify"]["webhook"] = f"{site_url}/api/method/cashfree.handle_webhook"
+        order_data["notify"]["webhook"] = f"{site_url}/api/method/cashfree.api.handle_webhook"
     
     # Headers for API request
     headers = {
@@ -345,31 +319,3 @@ def update_payment_status(payment_request_id, order_details):
     except Exception as e:
         frappe.log_error(title="Cashfree Payment Update Error", message=frappe.get_traceback())
         raise e
-
-
-# Install hooks
-def after_install():
-    """Setup Cashfree integration after installation"""
-    try:
-        # Check if Cashfree Settings document exists
-        if not frappe.db.exists("Cashfree Settings", {"name": "Cashfree Settings"}):
-            # Create settings document
-            settings = frappe.new_doc("Cashfree Settings")
-            settings.mode = "TEST"
-            settings.payment_capture = 1
-            settings.insert(ignore_permissions=True)
-            
-            # Create payment gateway
-            create_payment_gateway('Cashfree')
-            
-            frappe.db.commit()
-            
-            frappe.log_error(
-                title="Cashfree Integration Setup",
-                message="Cashfree integration setup completed successfully."
-            )
-    except Exception as e:
-        frappe.log_error(
-            title="Cashfree Integration Setup Error",
-            message=frappe.get_traceback()
-        )

@@ -4,5 +4,5 @@ from __future__ import unicode_literals
 def get_controller(payment_gateway):
     """Get payment gateway controller"""
     if payment_gateway == "Cashfree":
-        return "cashfree.cashfree.cashfree.CashfreeSettings"
+        return "cashfree.doctype.cashfree_settings.cashfree_settings.CashfreeSettings"
     return None

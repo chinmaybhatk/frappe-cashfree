@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) 2025, Your Company and Contributors
+# Copyright (c) 2025, walue.biz and Contributors
 # See license.txt
 
 import frappe
