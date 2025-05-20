@@ -1,0 +1,18 @@
+include MANIFEST.in
+include requirements.txt
+include *.json
+include *.md
+include *.py
+include *.txt
+recursive-include cashfree *.css
+recursive-include cashfree *.csv
+recursive-include cashfree *.html
+recursive-include cashfree *.ico
+recursive-include cashfree *.js
+recursive-include cashfree *.json
+recursive-include cashfree *.md
+recursive-include cashfree *.png
+recursive-include cashfree *.py
+recursive-include cashfree *.svg
+recursive-include cashfree *.txt
+recursive-exclude cashfree *.pyc
