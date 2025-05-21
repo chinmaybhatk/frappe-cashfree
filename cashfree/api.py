@@ -1,3 +1,5 @@
+import frappe
+
 @frappe.whitelist(allow_guest=True)
 def make_payment(checkout_data=None):
     """Create payment request and redirect to payment page"""
