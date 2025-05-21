@@ -22,6 +22,10 @@ def make_payment(checkout_data=None):
         if checkout_data is None:
             checkout_data = frappe.form_dict
         
+           # If it's a string (from JSON), parse it
+        if isinstance(checkout_data, str):
+            checkout_data = json.loads(checkout_data)
+        
         # If checkout_data is still empty, initialize it as an empty dict
         if not checkout_data:
             checkout_data = {}
@@ -182,7 +186,7 @@ def make_payment(checkout_data=None):
         payment_request.payment_gateway_account = frappe.db.get_value("Payment Gateway Account", 
                                                                    {"payment_gateway": "Cashfree", "currency": payment_request.currency},
                                                                    "name")
-        
+    
         # Email details
         payment_request.email_to = checkout_data.get("email") or frappe.session.user
         payment_request.subject = _("Payment Request for {}").format(payment_request.reference_name)
@@ -192,6 +196,23 @@ def make_payment(checkout_data=None):
         payment_request.save(ignore_permissions=True)
         payment_request.submit()
         
+ # Check if this is an API call or a web request
+        if frappe.local.request.path.startswith('/api/'):
+            # API call - return the payment request data
+            return payment_request
+        else:
+            # Web request - redirect to payment URL
+            payment_url = payment_request.payment_url
+            if payment_url:
+                # Redirect to the payment gateway
+                frappe.local.response["type"] = "redirect"
+                frappe.local.response["location"] = payment_url
+                return
+            else:
+                # If no payment URL, show an error message
+                frappe.msgprint(_("Could not generate payment URL. Please check the payment gateway settings."))
+                return payment_request
+
         return payment_request
     
     except Exception as e:
