@@ -41,3 +41,7 @@ fixtures = [
 
 # Integrations
 get_payment_gateway_controller = "cashfree.cashfree.controllers.get_controller"
+
+payment_gateway_controllers = {
+    "Cashfree": "cashfree.controller.CashfreeController"
+}

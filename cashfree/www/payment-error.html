@@ -1,0 +1,28 @@
+{% extends "templates/web.html" %}
+
+{% block title %}Payment Error{% endblock %}
+
+{% block page_content %}
+<div class="container payment-error-page">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-body text-center">
+                    <i class="fa fa-exclamation-triangle text-warning" style="font-size: 48px;"></i>
+                    <h1 class="mt-3">Payment Error</h1>
+                    <p class="lead">An error occurred during the payment process.</p>
+                    
+                    {% if frappe.form_dict.order_id %}
+                    <p>Order ID: {{ frappe.form_dict.order_id }}</p>
+                    {% endif %}
+                    
+                    <div class="mt-4">
+                        <a href="/" class="btn btn-primary">Return to Home</a>
+                        <a href="javascript:history.back()" class="btn btn-outline-primary ml-2">Try Again</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

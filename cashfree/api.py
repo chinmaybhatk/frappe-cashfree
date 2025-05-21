@@ -1,497 +1,319 @@
-# -*- coding: utf-8 -*-
-# Copyright (c) 2025, walue.biz and contributors
-# For license information, please see license.txt
-
-from __future__ import unicode_literals
+# Update cashfree/api.py
 import frappe
-import json
 import requests
-import hmac
-import hashlib
-import base64
+import json
 from frappe import _
-from frappe.utils import get_url, cint, flt, cstr, now, get_datetime
-from frappe.integrations.utils import create_request_log 
-from cashfree.doctype.cashfree_settings.cashfree_settings import CashfreeSettings
+from frappe.utils import get_url, cint
 
-@frappe.whitelist()
-# Add this where the Payment Request is being created
-def make_payment(checkout_data=None):
+@frappe.whitelist(allow_guest=True)
+def create_cashfree_order(amount=None, order_id=None, customer_details=None, order_meta=None, reference_doctype=None, reference_name=None):
+    """Create a Cashfree order and return the payment link"""
     try:
-        # If checkout_data is not provided, try to get data from frappe.form_dict
-        if checkout_data is None:
-            checkout_data = frappe.form_dict
-        
-           # If it's a string (from JSON), parse it
-        if isinstance(checkout_data, str):
-            checkout_data = json.loads(checkout_data)
-        
-        # If checkout_data is still empty, initialize it as an empty dict
-        if not checkout_data:
-            checkout_data = {}
-        
-        # Create a Payment Request with proper reference
-        payment_request = frappe.new_doc("Payment Request")
-        
-        # Extract amount early to ensure it's available
-        amount = checkout_data.get("amount")
-        if not amount:
+        # Get data from form_dict if not provided
+        if amount is None:
             amount = frappe.form_dict.get("amount")
-        
+        if reference_doctype is None:
+            reference_doctype = frappe.form_dict.get("reference_doctype")
+        if reference_name is None:
+            reference_name = frappe.form_dict.get("reference_name")
+            
         # Convert to float and ensure it's not None
         if amount:
             amount = float(amount)
         else:
             amount = 100  # Set a default amount if not provided
-        
-        # Set required fields to pass validation
-        payment_request.reference_doctype = checkout_data.get("reference_doctype") or "Sales Order"
-        payment_request.reference_name = checkout_data.get("reference_name")
-        
-        # If reference_name is not provided, create a temporary "Shopping Cart" reference
-        if not payment_request.reference_name:
-            # Check if there's a Sales Order or Cart to reference
-            cart_id = frappe.db.get_value("Shopping Cart", 
-                                         {"owner": frappe.session.user, "status": "Open"}, 
-                                         "name")
-            if cart_id:
-                payment_request.reference_doctype = "Shopping Cart"
-                payment_request.reference_name = cart_id
-            else:
-                # Get or create customer if needed
-                customer_name = frappe.db.get_value("Customer", {"email_id": frappe.session.user}, "name")
-                if not customer_name:
-                    # Find a valid customer group
-                    customer_group = None
-                    # First try to get the default customer group from Selling Settings
-                    try:
-                        customer_group = frappe.db.get_single_value("Selling Settings", "customer_group")
-                    except Exception:
-                        pass
-                    
-                    # If that fails, get the first available customer group
-                    if not customer_group:
-                        customer_groups = frappe.get_all("Customer Group", fields=["name"])
-                        if customer_groups:
-                            customer_group = customer_groups[0].name
-                        else:
-                            customer_group = "All Customer Groups"  # Fallback
-                    
-                    # Find a valid territory
-                    territory = None
-                    # First try to get the default territory from Selling Settings
-                    try:
-                        territory = frappe.db.get_single_value("Selling Settings", "territory")
-                    except Exception:
-                        pass
-                    
-                    # If that fails, get the first available territory
-                    if not territory:
-                        territories = frappe.get_all("Territory", fields=["name"])
-                        if territories:
-                            territory = territories[0].name
-                        else:
-                            territory = "All Territories"  # Fallback
-                    
-                    # Create a customer
-                    customer = frappe.new_doc("Customer")
-                    customer.customer_name = frappe.session.user.split("@")[0]
-                    customer.customer_type = "Individual"
-                    customer.customer_group = customer_group
-                    customer.territory = territory
-                    customer.email_id = frappe.session.user
-                    
-                    # Save the customer
-                    try:
-                        customer.save(ignore_permissions=True)
-                        customer_name = customer.name
-                    except Exception as e:
-                        frappe.log_error(f"Failed to create customer: {e}", "Cashfree Payment Error")
-                        # If we can't create a customer, use a default one
-                        default_customers = frappe.get_all("Customer", limit=1)
-                        if default_customers:
-                            customer_name = default_customers[0].name
-                        else:
-                            frappe.throw("No customers found in the system")
-                
-                # Create a proper sales order with all required fields
-                dummy_ref = frappe.new_doc("Sales Order")
-                dummy_ref.customer = customer_name
-                dummy_ref.order_type = "Shopping Cart"
-                dummy_ref.currency = checkout_data.get("currency") or "INR"
-                
-                # Get company
-                company = frappe.db.get_single_value("Global Defaults", "default_company")
-                if not company:
-                    companies = frappe.get_all("Company", limit=1)
-                    if companies:
-                        company = companies[0].name
-                    else:
-                        frappe.throw("No company found in the system")
-                
-                dummy_ref.company = company
-                dummy_ref.transaction_date = frappe.utils.today()
-                dummy_ref.delivery_date = frappe.utils.add_days(frappe.utils.today(), 7)
-                
-                # Add at least one item
-                item_code = frappe.db.get_value("Item", {"is_fixed_asset": 0, "is_stock_item": 0}, "name")
-                if not item_code:
-                    # Get any item if the first query fails
-                    item_code = frappe.db.get_value("Item", {}, "name")
-                    
-                    # Create a service item if no suitable item exists
-                    if not item_code:
-                        # Find a valid item group
-                        item_groups = frappe.get_all("Item Group", fields=["name"])
-                        item_group = "All Item Groups"
-                        if item_groups:
-                            item_group = item_groups[0].name
-                        
-                        # Create a service item
-                        service_item = frappe.new_doc("Item")
-                        service_item.item_name = "Payment Service"
-                        service_item.item_code = "PAYMENT-SERVICE"
-                        service_item.item_group = item_group
-                        service_item.is_stock_item = 0
-                        service_item.stock_uom = "Nos"
-                        service_item.save(ignore_permissions=True)
-                        item_code = service_item.name
-                    
-                dummy_ref.append("items", {
-                    "item_code": item_code,
-                    "qty": 1,
-                    "rate": amount,
-                    "amount": amount,
-                    "delivery_date": frappe.utils.add_days(frappe.utils.today(), 7)
-                })
-                
-                # Set totals explicitly
-                dummy_ref.total = amount
-                dummy_ref.grand_total = amount
-                dummy_ref.base_grand_total = amount
-                dummy_ref.rounded_total = amount
-                dummy_ref.base_rounded_total = amount
-                
-                # Save the sales order
-                dummy_ref.save(ignore_permissions=True)
-                
-                payment_request.reference_doctype = "Sales Order"
-                payment_request.reference_name = dummy_ref.name
-        
-        # Set other required fields
-        payment_request.payment_request_type = "Inward"
-        payment_request.currency = checkout_data.get("currency") or "INR"
-        payment_request.grand_total = amount
-        payment_request.payment_gateway = "Cashfree"
-        payment_request.payment_gateway_account = frappe.db.get_value("Payment Gateway Account", 
-                                                                   {"payment_gateway": "Cashfree", "currency": payment_request.currency},
-                                                                   "name")
-    
-        # Email details
-        payment_request.email_to = checkout_data.get("email") or frappe.session.user
-        payment_request.subject = _("Payment Request for {}").format(payment_request.reference_name)
-        payment_request.message = checkout_data.get("message") or _("Please click the link below to make your payment")
-        
-        # Save the payment request
-        payment_request.save(ignore_permissions=True)
-        payment_request.submit()
-        
- # Check if this is an API call or a web request
-        if frappe.local.request.path.startswith('/api/'):
-            # API call - return the payment request data
-            return payment_request
-        else:
-            # Web request - redirect to payment URL
-            payment_url = payment_request.payment_url
-            if payment_url:
-                # Redirect to the payment gateway
-                frappe.local.response["type"] = "redirect"
-                frappe.local.response["location"] = payment_url
-                return
-            else:
-                # If no payment URL, show an error message
-                frappe.msgprint(_("Could not generate payment URL. Please check the payment gateway settings."))
-                return payment_request
-
-        return payment_request
-    
-    except Exception as e:
-        frappe.log_error(title="Cashfree Payment Error", message=str(e))
-        raise
-
-def create_payment_request(reference_doctype, reference_docname):
-    """Create a payment request for the order"""
-    reference_doc = frappe.get_doc(reference_doctype, reference_docname)
-    
-    payment_request = frappe.new_doc("Payment Request")
-    payment_request.payment_gateway = "Cashfree"
-    payment_request.payment_gateway_account = get_gateway_account("Cashfree")
-    payment_request.payment_request_type = "Inward"
-    payment_request.party_type = reference_doc.get("party_type") or "Customer"
-    payment_request.party = reference_doc.get("party") or reference_doc.get("customer")
-    payment_request.reference_doctype = reference_doctype
-    payment_request.reference_docname = reference_docname
-    payment_request.grand_total = reference_doc.get("grand_total") or reference_doc.get("total")
-    payment_request.currency = reference_doc.get("currency")
-    payment_request.email_to = reference_doc.get("email_to") or reference_doc.get("contact_email")
-    
-    return payment_request
-
-
-def get_gateway_account(gateway_name):
-    """Get payment gateway account"""
-    return frappe.db.get_value("Payment Gateway Account", 
-        {"payment_gateway": gateway_name}, "name")
-
-
-def create_cashfree_order(payment_request, cashfree_settings):
-    """Create order in Cashfree"""
-    api_url = f"{cashfree_settings.get_api_url()}/pg/orders"
-    
-    # Generate a unique order id
-    order_id = f"CFORDER_{payment_request.name}"
-    
-    # Get site URL for callbacks
-    site_url = frappe.utils.get_url()
-    
-    # Prepare order data
-    order_data = {
-        "order_id": order_id,
-        "order_amount": flt(payment_request.grand_total),
-        "order_currency": payment_request.currency,
-        "customer_details": {
-            "customer_id": payment_request.party,
-            "customer_email": payment_request.email_to,
-            "customer_phone": get_contact_phone(payment_request.party_type, payment_request.party) or "9999999999"
-        },
-        "order_meta": {
-            "payment_request_id": payment_request.name,
-            "reference_doctype": payment_request.reference_doctype,
-            "reference_docname": payment_request.reference_docname
-        },
-        "order_note": f"Payment for {payment_request.reference_doctype} {payment_request.reference_docname}",
-        "notify": {
-            "email": cint(cashfree_settings.get("send_email_notification", 0)),
-            "sms": cint(cashfree_settings.get("send_sms_notification", 0))
-        }
-    }
-    
-    # Add callback URLs
-    if cashfree_settings.redirect_url:
-        order_data["return_url"] = cashfree_settings.redirect_url
-    else:
-        order_data["return_url"] = f"{site_url}/api/method/cashfree.api.handle_redirect"
-    
-    # Add webhook URL if configured
-    if cashfree_settings.webhook_url:
-        order_data["notify"]["webhook"] = cashfree_settings.webhook_url
-    else:
-        order_data["notify"]["webhook"] = f"{site_url}/api/method/cashfree.api.handle_webhook"
-
-
-    
-    # Headers for API request
-    headers = {
-        "x-api-version": "2022-09-01",  # Use the appropriate API version
-        "Content-Type": "application/json",
-        "x-client-id": cashfree_settings.api_key,
-        "x-client-secret": cashfree_settings.secret_key
-    }
-    
-    # Make the API call
-    response = requests.post(api_url, headers=headers, json=order_data)
-    if response.status_code >= 200 and response.status_code < 300:
-        return response.json()
-    else:
-        frappe.log_error(
-            title="Cashfree Order Creation Failed",
-            message=f"Status Code: {response.status_code}, Response: {response.text}"
-        )
-        return {"status": "ERROR", "message": response.text}
-
-
-def get_contact_phone(party_type, party):
-    """Get contact phone number for party"""
-    contact_name = frappe.db.get_value("Contact", 
-        {"links": {"link_doctype": party_type, "link_name": party}}, "name")
-    
-    if contact_name:
-        return frappe.db.get_value("Contact", contact_name, "mobile_no") or \
-               frappe.db.get_value("Contact", contact_name, "phone")
-    return None
-
-
-@frappe.whitelist(allow_guest=True)
-def handle_redirect():
-    """Handle the redirect from Cashfree payment page"""
-    try:
-        # Get the payment data from GET parameters
-        data = frappe.request.args
-        
-        # Verify the payment
-        order_id = data.get("order_id")
-        order_details = get_payment_status(order_id)
-        
-        if order_details.get("order_status") == "PAID":
-            # Extract the payment request ID from order_id
-            if order_id.startswith("CFORDER_"):
-                payment_request_id = order_id[8:]  # Remove "CFORDER_" prefix
-                update_payment_status(payment_request_id, order_details)
-                
-                # Redirect to success page
-                payment_request = frappe.get_doc("Payment Request", payment_request_id)
-                redirect_url = payment_request.get_redirect_url()
-                frappe.local.response["type"] = "redirect"
-                frappe.local.response["location"] = redirect_url or "/payment-success"
-            else:
-                frappe.log_error(title="Invalid Cashfree Order ID", message=str(data))
-                frappe.local.response["type"] = "redirect"
-                frappe.local.response["location"] = "/payment-failed"
-        else:
-            frappe.local.response["type"] = "redirect"
-            frappe.local.response["location"] = "/payment-failed"
             
-    except Exception as e:
-        frappe.log_error(title="Cashfree Redirect Handler Error", message=frappe.get_traceback())
-        frappe.local.response["type"] = "redirect"
-        frappe.local.response["location"] = "/payment-failed"
-
-
-@frappe.whitelist(allow_guest=True)
-def handle_webhook():
-    """Handle webhook notifications from Cashfree"""
-    try:
-        # Get the webhook data
-        data = json.loads(frappe.request.data)
-        event_type = data.get("event_type")
+        settings = frappe.get_doc("Cashfree Settings")
         
-        # Log the webhook data
-        create_request_log(data, "Host", "Cashfree")
+        # Generate a unique order ID if not provided
+        if not order_id:
+            # Use reference doc if available or generate a hash
+            if reference_doctype and reference_name:
+                order_id = f"{reference_doctype}-{reference_name}-{frappe.utils.random_string(5)}"
+            else:
+                order_id = f"CF-{frappe.utils.random_string(10)}"
         
-        # Verify webhook signature
-        if not verify_webhook_signature(frappe.request):
-            frappe.throw(_("Invalid webhook signature"))
+        # Get customer details
+        if not customer_details:
+            customer_details = {
+                "customer_id": frappe.session.user,
+                "customer_name": frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user.split('@')[0],
+                "customer_email": frappe.session.user,
+                "customer_phone": frappe.db.get_value("User", frappe.session.user, "mobile_no") or "9999999999"
+            }
         
-        # Process the webhook based on event type
-        if event_type == "PAYMENT_SUCCESS":
-            order_id = data.get("data", {}).get("order", {}).get("order_id")
-            if order_id and order_id.startswith("CFORDER_"):
-                payment_request_id = order_id[8:]  # Remove "CFORDER_" prefix
-                update_payment_status(payment_request_id, data.get("data", {}).get("order", {}))
+        # Prepare order data
+        order_data = {
+            "order_id": order_id,
+            "order_amount": float(amount),
+            "order_currency": "INR",
+            "customer_details": customer_details,
+            "order_meta": order_meta or {},
+            "order_note": f"Payment for {reference_doctype or 'order'} {reference_name or ''}",
+            "order_tags": {"source": "frappe"}
+        }
         
-        return {"status": "success"}
+        # Add return URLs
+        site_url = frappe.utils.get_url()
+        order_data["order_tags"].update({
+            "return_url": f"{site_url}/api/method/cashfree.api.handle_return?order_id={order_id}"
+        })
         
-    except Exception as e:
-        frappe.log_error(title="Cashfree Webhook Error", message=frappe.get_traceback())
-        return {"status": "error", "message": str(e)}
-
-
-def verify_webhook_signature(request):
-    """Verify the webhook signature"""
-    try:
-        # Get cashfree settings
-        cashfree_settings = frappe.get_doc("Cashfree Settings")
+        # API endpoints
+        if settings.mode == "TEST":
+            api_url = "https://sandbox.cashfree.com/pg/orders"
+        else:
+            api_url = "https://api.cashfree.com/pg/orders"
         
-        # If webhook secret is not set, skip verification (not recommended for production)
-        if not cashfree_settings.webhook_secret:
-            return True
-        
-        # Get webhook signature from headers
-        cf_signature = request.headers.get("x-webhook-signature")
-        if not cf_signature:
-            return False
-        
-        # Get request body as bytes
-        request_body = request.data
-        
-        # Calculate expected signature
-        timestamp = request.headers.get("x-webhook-timestamp")
-        message = timestamp + request_body.decode('utf-8')
-        
-        # Create HMAC signature
-        secret = cashfree_settings.webhook_secret.encode('utf-8')
-        expected_signature = base64.b64encode(
-            hmac.new(secret, message.encode('utf-8'), hashlib.sha256).digest()
-        ).decode('utf-8')
-        
-        # Compare signatures
-        return cf_signature == expected_signature
-        
-    except Exception as e:
-        frappe.log_error(title="Cashfree Webhook Signature Verification Error", message=frappe.get_traceback())
-        return False
-
-
-def get_payment_status(order_id):
-    """Get payment status from Cashfree API"""
-    try:
-        cashfree_settings = frappe.get_doc("Cashfree Settings")
-        api_url = f"{cashfree_settings.get_api_url()}/pg/orders/{order_id}"
-        
+        # Make API request to create order
         headers = {
             "x-api-version": "2022-09-01",
-            "Content-Type": "application/json",
-            "x-client-id": cashfree_settings.api_key,
-            "x-client-secret": cashfree_settings.secret_key
+            "x-client-id": settings.api_key,
+            "x-client-secret": settings.get_password("secret_key"),
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(
+            api_url, 
+            headers=headers,
+            json=order_data
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Log order creation for debugging
+            frappe.logger().debug(f"Cashfree order created: {result}")
+            
+            # Create a Payment Request record
+            payment_request = frappe.new_doc("Payment Request")
+            
+            # Set reference document if provided
+            if reference_doctype and reference_name:
+                payment_request.reference_doctype = reference_doctype
+                payment_request.reference_name = reference_name
+            
+            payment_request.payment_request_type = "Inward"
+            payment_request.currency = "INR"
+            payment_request.grand_total = amount
+            payment_request.payment_gateway = "Cashfree"
+            payment_request.payment_gateway_account = frappe.db.get_value(
+                "Payment Gateway Account",
+                {"payment_gateway": "Cashfree", "currency": "INR"},
+                "name"
+            )
+            payment_request.email_to = customer_details.get("customer_email")
+            payment_request.subject = _("Payment Request for Order {0}").format(order_id)
+            payment_request.message = _("Please click the link below to make your payment")
+            
+            # Store Cashfree order ID in payment request as a custom field
+            # If the custom field doesn't exist, we'll attach it as a property
+            payment_request.order_id = order_id
+            payment_request.payment_url = result.get("payment_link")
+            
+            # Save and submit the payment request
+            payment_request.save(ignore_permissions=True)
+            payment_request.submit()
+            
+            # Return the payment link for redirection
+            return {
+                "success": True,
+                "payment_link": result.get("payment_link"),
+                "order_id": order_id,
+                "payment_request": payment_request.name
+            }
+        else:
+            frappe.log_error(
+                title="Cashfree Order Creation Failed",
+                message=f"Status Code: {response.status_code}, Response: {response.text}"
+            )
+            return {
+                "success": False,
+                "message": f"Failed to create Cashfree order: {response.text}"
+            }
+            
+    except Exception as e:
+        frappe.log_error(title="Cashfree Payment Error", message=str(e))
+        return {"success": False, "message": str(e)}
+
+
+@frappe.whitelist(allow_guest=True)
+def handle_return():
+    """Handle return from Cashfree payment page"""
+    try:
+        order_id = frappe.form_dict.get("order_id")
+        
+        # Verify the payment status
+        settings = frappe.get_doc("Cashfree Settings")
+        
+        # API endpoints
+        if settings.mode == "TEST":
+            api_url = f"https://sandbox.cashfree.com/pg/orders/{order_id}"
+        else:
+            api_url = f"https://api.cashfree.com/pg/orders/{order_id}"
+        
+        # Make API request to get order status
+        headers = {
+            "x-api-version": "2022-09-01",
+            "x-client-id": settings.api_key,
+            "x-client-secret": settings.get_password("secret_key"),
+            "Content-Type": "application/json"
         }
         
         response = requests.get(api_url, headers=headers)
-        if response.status_code >= 200 and response.status_code < 300:
-            return response.json()
-        else:
-            frappe.log_error(
-                title="Cashfree Payment Status Check Failed",
-                message=f"Status Code: {response.status_code}, Response: {response.text}"
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Get payment request by order_id (stored as a custom field or property)
+            payment_request_name = frappe.db.get_value(
+                "Payment Request", 
+                {"order_id": order_id}, 
+                "name"
             )
-            return {"status": "ERROR", "message": response.text}
+            
+            if not payment_request_name:
+                # Try a different approach if the custom field doesn't exist
+                # This is a fallback and may not work in all cases
+                payment_requests = frappe.get_all(
+                    "Payment Request", 
+                    filters={"status": ["in", ["Initiated", "Requested"]]},
+                    fields=["name", "creation"],
+                    order_by="creation desc",
+                    limit=5
+                )
+                
+                if payment_requests:
+                    payment_request_name = payment_requests[0].name
+            
+            if payment_request_name:
+                payment_request = frappe.get_doc("Payment Request", payment_request_name)
+                
+                # Update payment request status based on order status
+                if result.get("order_status") == "PAID":
+                    # Set as paid
+                    payment_request.status = "Paid"
+                    payment_request.save(ignore_permissions=True)
+                    
+                    # Create payment entry if needed
+                    if hasattr(payment_request, 'set_as_paid'):
+                        payment_entry = payment_request.set_as_paid()
+                    
+                    # Redirect to success page
+                    success_url = "/payment-success"
+                    if payment_request.reference_doctype and payment_request.reference_name:
+                        success_url += f"?reference_doctype={payment_request.reference_doctype}&reference_name={payment_request.reference_name}"
+                    
+                    frappe.local.response["type"] = "redirect"
+                    frappe.local.response["location"] = success_url
+                else:
+                    # Set as failed
+                    payment_request.status = "Failed"
+                    payment_request.save(ignore_permissions=True)
+                    
+                    # Redirect to failure page
+                    frappe.local.response["type"] = "redirect"
+                    frappe.local.response["location"] = "/payment-failed?order_id=" + order_id
+            else:
+                # Redirect to error page
+                frappe.local.response["type"] = "redirect"
+                frappe.local.response["location"] = "/payment-error?order_id=" + order_id
+        else:
+            # Redirect to error page
+            frappe.local.response["type"] = "redirect"
+            frappe.local.response["location"] = "/payment-error?order_id=" + order_id
             
     except Exception as e:
-        frappe.log_error(title="Cashfree Payment Status Error", message=frappe.get_traceback())
-        return {"status": "ERROR", "message": str(e)}
+        frappe.log_error(title="Cashfree Return Handler Error", message=str(e))
+        frappe.local.response["type"] = "redirect"
+        frappe.local.response["location"] = "/payment-error"
 
 
-def update_payment_status(payment_request_id, order_details):
-    """Update payment request and reference document status"""
+@frappe.whitelist(allow_guest=True)
+def redirect_to_payment():
+    """Create order and redirect to Cashfree payment page"""
     try:
-        # Get payment request
-        payment_request = frappe.get_doc("Payment Request", payment_request_id)
+        amount = frappe.form_dict.get("amount")
+        reference_doctype = frappe.form_dict.get("reference_doctype")
+        reference_name = frappe.form_dict.get("reference_name")
         
-        # Update payment request
-        payment_request.db_set("status", "Paid")
-        payment_request.db_set("transaction_date", now())
-        
-        # Create a payment entry
-        payment_entry = payment_request.create_payment_entry(
-            submit=True,
-            payment_id=order_details.get("cf_order_id", order_details.get("order_id")),
-            payment_gateway="Cashfree"
+        # Create order
+        result = create_cashfree_order(
+            amount=amount,
+            reference_doctype=reference_doctype,
+            reference_name=reference_name
         )
         
-        # Log the transaction
-        payment_log = {
-            "payment_request": payment_request_id,
-            "payment_entry": payment_entry.name,
-            "order_id": order_details.get("order_id"),
-            "cf_payment_id": order_details.get("cf_payment_id"),
-            "order_amount": order_details.get("order_amount"),
-            "order_status": order_details.get("order_status"),
-            "payment_method": order_details.get("payment_method"),
-            "transaction_time": order_details.get("transaction_time")
-        }
-        
-        frappe.get_doc({
-            "doctype": "Integration Request",
-            "integration_type": "Payment Request",
-            "service_name": "Cashfree",
-            "reference_doctype": "Payment Request",
-            "reference_docname": payment_request_id,
-            "data": json.dumps(payment_log),
-            "status": "Completed"
-        }).insert(ignore_permissions=True)
-        
-        # Return payment entry
-        return payment_entry
-        
+        if result.get("success") and result.get("payment_link"):
+            # Redirect to payment page
+            frappe.local.response["type"] = "redirect"
+            frappe.local.response["location"] = result.get("payment_link")
+        else:
+            # Show error
+            frappe.respond_as_web_page(
+                _("Payment Error"),
+                _("Unable to initiate payment. Please try again later."),
+                success=False,
+                http_status_code=500
+            )
     except Exception as e:
-        frappe.log_error(title="Cashfree Payment Update Error", message=frappe.get_traceback())
-        raise e
+        frappe.log_error(title="Cashfree Redirect Error", message=str(e))
+        frappe.respond_as_web_page(
+            _("Payment Error"),
+            _("An error occurred during payment initiation. Please try again."),
+            success=False,
+            http_status_code=500
+        )
+
+
+# Keep the original make_payment function for backward compatibility
+# But modify it to use the new redirect approach
+@frappe.whitelist(allow_guest=True)
+def make_payment(checkout_data=None):
+    """Legacy function for backward compatibility"""
+    try:
+        # Extract data
+        if isinstance(checkout_data, str):
+            checkout_data = json.loads(checkout_data)
+        elif checkout_data is None:
+            checkout_data = frappe.form_dict
+            
+        # Extract key values
+        amount = checkout_data.get("amount")
+        reference_doctype = checkout_data.get("reference_doctype")
+        reference_name = checkout_data.get("reference_name")
+        
+        # Create cashfree order using the new method
+        result = create_cashfree_order(
+            amount=amount,
+            reference_doctype=reference_doctype,
+            reference_name=reference_name
+        )
+        
+        # Check if we should redirect or return JSON
+        is_api_call = frappe.local.request.path.startswith('/api/')
+        
+        if result.get("success"):
+            if is_api_call:
+                # Return JSON response for API calls
+                return result
+            else:
+                # Redirect for web requests
+                frappe.local.response["type"] = "redirect"
+                frappe.local.response["location"] = result.get("payment_link")
+                return
+        else:
+            # Return error response
+            if is_api_call:
+                return result
+            else:
+                frappe.respond_as_web_page(
+                    _("Payment Error"),
+                    _("Unable to initiate payment. Please try again later."),
+                    success=False,
+                    http_status_code=500
+                )
+                
+    except Exception as e:
+        frappe.log_error(title="Legacy Payment Function Error", message=str(e))
+        raise
