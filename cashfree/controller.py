@@ -244,3 +244,7 @@ def handle_payment_return():
         frappe.log_error(title="Cashfree Return Handler Error", message=str(e))
         frappe.local.response["type"] = "redirect"
         frappe.local.response["location"] = "/?payment_error=1"
+
+    def get_payment_url(self, **kwargs):
+        frappe.log_error(f"Payment URL called with: {kwargs}", "Cashfree Debug")
+    # Rest of your code
