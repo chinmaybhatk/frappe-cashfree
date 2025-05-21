@@ -1,0 +1,6 @@
+{% extends "templates/includes/checkout/payment_method.html" %}
+
+{% block payment_methods %}
+{{ super() }}
+{% include "templates/includes/payments/cashfree.html" %}
+{% endblock %}

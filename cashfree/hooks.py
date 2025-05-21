@@ -45,3 +45,14 @@ get_payment_gateway_controller = "cashfree.cashfree.controllers.get_controller"
 payment_gateway_controllers = {
     "Cashfree": "cashfree.controller.CashfreeController"
 }
+# Add the following to hooks.py:
+
+# Add to hooks.py
+web_include_js = [
+    "/assets/cashfree/js/cashfree_checkout.js",
+    "/assets/cashfree/js/custom_checkout.js"
+]
+website_route_rules = [
+    {"from_route": "/payment-success", "to_route": "payment_success"},
+    {"from_route": "/payment-failure", "to_route": "payment_failure"}
+]

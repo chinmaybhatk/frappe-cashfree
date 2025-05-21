@@ -1,0 +1,20 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ _("Payment Successful") }}{% endblock %}
+
+{% block page_content %}
+<div class="container payment-success-container">
+    <div class="row">
+        <div class="col-sm-12 text-center">
+            <h2 class="text-success">
+                <i class="fa fa-check-circle"></i> {{ _("Payment Successful") }}
+            </h2>
+            <p>{{ _("Your order has been placed successfully.") }}</p>
+            <div class="mt-4">
+                <a href="/orders" class="btn btn-primary">{{ _("View Orders") }}</a>
+                <a href="/shop" class="btn btn-outline-primary">{{ _("Continue Shopping") }}</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
